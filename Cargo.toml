@@ -11,3 +11,6 @@ tokio-proto = { git = "https://github.com/tokio-rs/tokio-proto" }
 tokio-service = "*"
 
 solicit = { git = "https://github.com/mlalic/solicit" }
+
+[dev-dependencies]
+env_logger = "*"
