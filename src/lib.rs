@@ -9,3 +9,4 @@ extern crate tokio_proto;
 extern crate solicit;
 
 mod io;
+pub mod client;
