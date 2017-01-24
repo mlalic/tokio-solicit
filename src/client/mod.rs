@@ -2,6 +2,8 @@
 
 use solicit::http::{StaticHeader};
 
+mod tokio_layer;
+
 /// A struct representing the headers used to start a new HTTP request.
 ///
 /// Theoretically, this same struct could be used regardless whether the underlying protocol is
