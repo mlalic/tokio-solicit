@@ -1,8 +1,13 @@
 //! The module implements an HTTP/2 client driven by Tokio's async IO.
+//!
+//! It exports the `H2Client` struct, which exposes the main client API.
 
 use solicit::http::{StaticHeader};
 
 mod tokio_layer;
+mod client_wrapper;
+
+pub use self::client_wrapper::H2Client;
 
 /// A struct representing the headers used to start a new HTTP request.
 ///
