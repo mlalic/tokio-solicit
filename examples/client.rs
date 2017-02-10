@@ -5,8 +5,10 @@ extern crate futures;
 extern crate tokio_solicit;
 
 use std::str;
+use std::io::{self};
 
-use futures::{Future};
+use futures::{Future, Stream};
+use futures::future::{self};
 use tokio_core::reactor::{Core};
 
 use tokio_solicit::client::H2Client;
@@ -39,10 +41,30 @@ fn main() {
         let get = client.get(b"/get");
         let post = client.post(b"/post", b"Hello, world!".to_vec());
 
+        // Accumulate the bodies of each request into a single vector, ignoring the
+        // headers...
+        let get = get.and_then(|(_headers, body)| {
+            body.fold(Vec::<u8>::new(), |mut vec, chunk| {
+                vec.extend(chunk.body.into_iter());
+                future::ok::<_, io::Error>(vec)
+            })
+        });
+
+        let post = post.and_then(|(_, body)| {
+            body.fold(Vec::<u8>::new(), |mut vec, chunk| {
+                vec.extend(chunk.body.into_iter());
+                future::ok::<_, io::Error>(vec)
+            })
+        });
+
+        // ...and yield a future that resolves once both bodies are ready
         Future::join(get, post)
-    }).map(|(get_response, post_response)| {
-        let get_res: String = str::from_utf8(&get_response.body).unwrap().into();
-        let post_res: String = str::from_utf8(&post_response.body).unwrap().into();
+    }).map(|(get_response_body, post_response_body)| {
+        // Convert the bodies to a UTF-8 string
+        let get_res: String = str::from_utf8(&get_response_body).unwrap().into();
+        let post_res: String = str::from_utf8(&post_response_body).unwrap().into();
+
+        // ...and yield a pair of bodies converted to a string.
         (get_res, post_res)
     });
 

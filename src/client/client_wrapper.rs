@@ -10,7 +10,7 @@ use std::iter::{self, IntoIterator};
 
 use futures::{Async, Future, Poll};
 use futures::future::{BoxFuture};
-use futures::stream::{self};
+use futures::stream::{self, Stream};
 
 use tokio_core::reactor::{Handle};
 use tokio_proto::{Connect, TcpClient};
@@ -34,9 +34,35 @@ type TokioClient =
         Message<HttpResponseHeaders, Body<HttpResponseBody, io::Error>>,
         io::Error>;
 
+/// A `futures::Stream` impl that represents the body of the response. The `Future` returned
+/// by various `H2Client` methods returns an instance of this type, along with the response
+/// headers.
+pub struct ResponseBodyStream {
+    /// The type simply hides away the Tokio `Body`, which will be returned by Tokio client
+    /// Service.
+    inner: Body<HttpResponseBody, io::Error>,
+}
+
+impl ResponseBodyStream {
+    fn new(inner: Body<HttpResponseBody, io::Error>) -> ResponseBodyStream {
+        ResponseBodyStream {
+            inner: inner,
+        }
+    }
+}
+
+impl Stream for ResponseBodyStream {
+    type Item = HttpResponseBody;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.inner.poll()
+    }
+}
+
 /// A type alias for the future that is produced by the `H2Client`'s various `request` methods.
 /// (`request`, `get`, `post`, ...)
-type FutureH2Response = BoxFuture<HttpResponseHeaders, io::Error>;
+type FutureH2Response = BoxFuture<(HttpResponseHeaders, ResponseBodyStream), io::Error>;
 
 /// A struct that implements a futures-based API for an HTTP/2 client.
 pub struct H2Client {
@@ -125,11 +151,12 @@ impl H2Client {
 
             match response {
                 Message::WithoutBody(resp @ HttpResponseHeaders { .. }) => {
-                    // Currently the entire response (including the actual response body)
-                    // will be found in the HttpResponseHeaders.
-                    resp
+                    // If there's no body, just yield an empty body stream.
+                    (resp, ResponseBodyStream::new(Body::empty()))
                 },
-                _ => unreachable!("currently all responses are a single blob"),
+                Message::WithBody(resp @ HttpResponseHeaders { .. }, body) => {
+                    (resp, ResponseBodyStream::new(body))
+                },
             }
         });
 

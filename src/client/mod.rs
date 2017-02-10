@@ -51,18 +51,14 @@ impl HttpRequestBody {
 
 /// The response to an HTTP request.
 ///
-/// Currently, the response immedialely carries the entire contents of the body, i.e. the body is
-/// not streamed, even though the `tokio_layer` is based on a streaming/multiplexed Tokio protcol.
-/// This is a temporary WIP/PoC state...
+/// Simply carries the response headers.
 #[derive(Debug)]
 pub struct HttpResponseHeaders {
     pub headers: Vec<StaticHeader>,
-    pub body: Vec<u8>,
 }
 
 /// A chunk of the response body.
-///
-/// Currently only used to satisfy the various type bounds in `tokio_layer` with a placeholder
-/// type, as the entire response is always "bodiless" from Tokio's perspective (the body is carried
-/// in the "headers").
-pub struct HttpResponseBody;
+#[derive(Debug)]
+pub struct HttpResponseBody {
+    pub body: Vec<u8>,
+}
