@@ -11,6 +11,7 @@ use std::iter::{self, IntoIterator};
 use futures::{Async, Future, Poll};
 use futures::future::{self, BoxFuture};
 use futures::stream::{Stream};
+use futures::sync::mpsc;
 
 use tokio_core::reactor::{Handle};
 use tokio_proto::{Connect, TcpClient};
@@ -155,27 +156,8 @@ impl H2Client {
                       body: Option<Vec<u8>>)
                       -> FutureH2Response
                       where I: IntoIterator<Item=StaticHeader> {
-        let mut headers = Vec::new();
-        headers.extend(vec![
-            Header::new(b":method", method.to_vec()),
-            Header::new(b":path", path.to_vec()),
-            Header::new(b":authority", self.authority.clone()),
-            Header::new(b":scheme", b"http"),
-        ].into_iter());
-        headers.extend(user_headers.into_iter());
-
-        self.request_with_vec(headers, body)
-    }
-
-    /// Actually performs the full request. Avoids monomorphizing the entire code, but rather only
-    /// the bit that requires the use of the IntoIterator trait, before passing off to this.
-    fn request_with_vec(&mut self,
-                        headers: Vec<StaticHeader>,
-                        body: Option<Vec<u8>>)
-                        -> FutureH2Response {
-
-        let request_headers = HttpRequestHeaders::with_headers(headers);
-        let tokio_req = match body {
+        let request_headers = self.prepare_headers(method, path, user_headers);
+        let tokio_message = match body {
             None => Message::WithoutBody(request_headers),
             Some(body) => {
                 let body_stream = Body::from(HttpRequestBody::new(body));
@@ -183,7 +165,31 @@ impl H2Client {
             },
         };
 
-        let response_future = Service::call(&self.inner, tokio_req).map(|response| {
+        self.request_with_message(tokio_message)
+    }
+
+    /// Perform a request, where the method and path are already provided, while the body should be
+    /// streamed out by posting body chunks (`HttpRequestBody` instances) onto the returned
+    /// channel.
+    pub fn streaming_request<I>(&mut self,
+                                method: &[u8],
+                                path: &[u8],
+                                user_headers: I)
+                                -> (FutureH2Response, mpsc::Sender<Result<HttpRequestBody, io::Error>>)
+                                where I: IntoIterator<Item=StaticHeader> {
+
+        let headers = self.prepare_headers(method, path, user_headers);
+        let (tx, body) = Body::pair();
+
+        (self.request_with_message(Message::WithBody(headers, body)), tx)
+    }
+
+    /// Actually performs the full request. Avoids monomorphizing the entire code, but rather only
+    /// the bit that requires the use of the IntoIterator trait, before passing off to this.
+    fn request_with_message(&mut self,
+                            message: Message<HttpRequestHeaders, RequestBodyStream>)
+                            -> FutureH2Response {
+        let response_future = Service::call(&self.inner, message).map(|response| {
             debug!("resolved response message");
 
             match response {
@@ -198,6 +204,26 @@ impl H2Client {
         });
 
         FutureH2Response::new(response_future.boxed())
+    }
+
+    /// Creates `HttpRequestHeaders` that will include appropriate pseudo-headers, as well as the
+    /// given user-provided extra headers.
+    fn prepare_headers<I>(&mut self,
+                          method: &[u8],
+                          path: &[u8],
+                          user_headers: I)
+                          -> HttpRequestHeaders
+                          where I: IntoIterator<Item=StaticHeader> {
+        let mut headers = Vec::new();
+        headers.extend(vec![
+            Header::new(b":method", method.to_vec()),
+            Header::new(b":path", path.to_vec()),
+            Header::new(b":authority", self.authority.clone()),
+            Header::new(b":scheme", b"http"),
+        ].into_iter());
+        headers.extend(user_headers.into_iter());
+
+        HttpRequestHeaders::with_headers(headers)
     }
 }
 

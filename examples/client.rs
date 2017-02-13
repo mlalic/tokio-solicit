@@ -13,7 +13,6 @@ use tokio_core::reactor::{Core};
 
 use tokio_solicit::client::H2Client;
 
-
 fn main() {
     env_logger::init().expect("logger init is required");
 
@@ -70,5 +69,32 @@ fn main() {
 
     let res = core.run(future_response).expect("responses!");
 
+    println!("{:?}", res);
+
+    // An additional demo showing how to perform a streaming _request_ (i.e. the body of the
+    // request is streamed out to the server).
+    do_streaming_request(&mut core);
+}
+
+fn do_streaming_request(core: &mut Core) {
+    use std::iter;
+    use tokio_solicit::client::HttpRequestBody;
+    use futures::Sink;
+
+    let handle = core.handle();
+    let addr = "127.0.0.1:8080".parse().expect("valid IP address");
+    let future_client = H2Client::connect("localhost", &addr, &handle);
+
+    let future_response = future_client.and_then(|mut client| {
+        let (post, tx) = client.streaming_request(b"POST", b"/post", iter::empty());
+        tx
+            .send(Ok(HttpRequestBody::new(b"HELLO ".to_vec())))
+            .and_then(|tx| tx.send(Ok(HttpRequestBody::new(b" WORLD".to_vec()))))
+            .and_then(|tx| tx.send(Ok(HttpRequestBody::new(b"!".to_vec()))))
+            .map_err(|_err| io::Error::from(io::ErrorKind::BrokenPipe))
+            .and_then(|_tx| post.into_full_body_response())
+    });
+
+    let res = core.run(future_response).expect("response");
     println!("{:?}", res);
 }
