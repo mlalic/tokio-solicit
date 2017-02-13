@@ -10,7 +10,7 @@ use std::iter::{self, IntoIterator};
 
 use futures::{Async, Future, Poll};
 use futures::future::{self, BoxFuture};
-use futures::stream::{self, Stream};
+use futures::stream::{Stream};
 
 use tokio_core::reactor::{Handle};
 use tokio_proto::{Connect, TcpClient};
@@ -22,9 +22,8 @@ use tokio_service::{Service};
 
 use solicit::http::{Header, StaticHeader};
 
-/// A type alias for the request body stream. For now, we assume that all requests are a
-/// single-chunk stream.
-type RequestBodyStream = stream::Once<HttpRequestBody, io::Error>;
+/// A type alias for the request body stream.
+type RequestBodyStream = Body<HttpRequestBody, io::Error>;
 
 /// A type alias for the `ClientProxy` that we end up building after an `Io` is bound to a
 /// `H2ClientTokioTransport` by `H2ClientTokioProto`.
@@ -179,7 +178,7 @@ impl H2Client {
         let tokio_req = match body {
             None => Message::WithoutBody(request_headers),
             Some(body) => {
-                let body_stream = stream::once::<_, io::Error>(Ok(HttpRequestBody::new(body)));
+                let body_stream = Body::from(HttpRequestBody::new(body));
                 Message::WithBody(request_headers, body_stream)
             },
         };
