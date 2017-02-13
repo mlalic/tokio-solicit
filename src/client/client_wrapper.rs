@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::iter::{self, IntoIterator};
 
 use futures::{Async, Future, Poll};
-use futures::future::{BoxFuture};
+use futures::future::{self, BoxFuture};
 use futures::stream::{self, Stream};
 
 use tokio_core::reactor::{Handle};
@@ -83,6 +83,24 @@ impl FutureH2Response {
         FutureH2Response {
             inner: inner,
         }
+    }
+
+    /// Consumes the `FutureH2Response` and returns a new `Future` that will resolve once the full
+    /// body of the response has become available, with both the response headers and all the body
+    /// bytes in a `Vec<u8>`.
+    pub fn into_full_body_response(self) -> BoxFuture<(HttpResponseHeaders, Vec<u8>), io::Error> {
+        let body_response = self.and_then(|(headers, body_stream)| {
+            body_stream
+                .fold(Vec::<u8>::new(), |mut vec, chunk| {
+                    vec.extend(chunk.body.into_iter());
+                    future::ok::<_, io::Error>(vec)
+                })
+                .map(|body| {
+                    (headers, body)
+                })
+        });
+
+        body_response.boxed()
     }
 }
 

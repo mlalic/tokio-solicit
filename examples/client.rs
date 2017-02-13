@@ -43,15 +43,15 @@ fn main() {
 
         // Accumulate the bodies of each request into a single vector, ignoring the
         // headers...
-        let get = get.and_then(|(_headers, body)| {
-            body.fold(Vec::<u8>::new(), |mut vec, chunk| {
-                vec.extend(chunk.body.into_iter());
-                future::ok::<_, io::Error>(vec)
-            })
-        });
+        // Here we do it using the convenience method exposed by the request Future.
+        let get = get.into_full_body_response().map(|(_headers, body)| body);
 
+        // In this case, do it "manually" in order to do some more processing for each chunk (for
+        // demo purposes).
         let post = post.and_then(|(_, body)| {
             body.fold(Vec::<u8>::new(), |mut vec, chunk| {
+                println!("receiving a new chunk of size {}", chunk.body.len());
+
                 vec.extend(chunk.body.into_iter());
                 future::ok::<_, io::Error>(vec)
             })
