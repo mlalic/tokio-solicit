@@ -60,9 +60,31 @@ impl Stream for ResponseBodyStream {
     }
 }
 
-/// A type alias for the future that is produced by the `H2Client`'s various `request` methods.
+/// A `Future` produced by the `H2Client`'s various `request` methods.
 /// (`request`, `get`, `post`, ...)
-type FutureH2Response = BoxFuture<(HttpResponseHeaders, ResponseBodyStream), io::Error>;
+pub struct FutureH2Response {
+    /// Simply wraps a boxed future
+    inner: BoxFuture<(HttpResponseHeaders, ResponseBodyStream), io::Error>,
+}
+
+impl Future for FutureH2Response {
+    type Item = (HttpResponseHeaders, ResponseBodyStream);
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+impl FutureH2Response {
+    /// Creates a new `FutureH2Response` wrapping the given boxed future.
+    fn new(inner: BoxFuture<(HttpResponseHeaders, ResponseBodyStream), io::Error>)
+            -> FutureH2Response {
+        FutureH2Response {
+            inner: inner,
+        }
+    }
+}
 
 /// A struct that implements a futures-based API for an HTTP/2 client.
 pub struct H2Client {
@@ -99,8 +121,6 @@ impl H2Client {
     ///
     /// Yields a future that resolves to an `HttpRequestHeaders` struct. This struct will carry
     /// both the response headers, as well as the response body.
-    ///
-    /// TODO: WTB `-> impl` to avoid boxing this (or manually implementing a Future)
     pub fn get(&mut self, path: &[u8]) -> FutureH2Response {
         self.request(b"GET", path, iter::empty(), None)
     }
@@ -160,7 +180,7 @@ impl H2Client {
             }
         });
 
-        response_future.boxed()
+        FutureH2Response::new(response_future.boxed())
     }
 }
 
