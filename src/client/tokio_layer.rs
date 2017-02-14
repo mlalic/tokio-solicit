@@ -7,7 +7,14 @@
 //! Also exposes the `H2ClientTokioProto` that allows an existing `Io` instance to be bound
 //! to the HTTP/2 Tokio transport, as implemented by `H2ClientTokioTransport`.
 
-use super::{HttpRequestHeaders, HttpRequestBody, HttpResponseHeaders, HttpResponseBody};
+use super::{
+    Http2Error,
+    TokioSyncError,
+    HttpRequestHeaders,
+    HttpRequestBody,
+    HttpResponseHeaders,
+    HttpResponseBody
+};
 
 use io::{FrameSender, FrameReceiver};
 
@@ -26,7 +33,7 @@ use tokio_core::io::{Io, self as tokio_io};
 use tokio_proto::streaming::multiplex::{ClientProto, Transport, Frame};
 
 use solicit::http::{
-    HttpResult, HttpScheme,
+    HttpScheme,
     Header, StaticHeader, OwnedHeader,
     StreamId
 };
@@ -152,11 +159,11 @@ impl H2Stream {
     /// already been instructed that it should be locally closed (via `set_should_close`) even if
     /// it still hasn't actually become locally closed (i.e. not everything that's been buffered
     /// has been sent out to the server yet).
-    pub fn add_data(&mut self, data: Vec<u8>) -> Result<(), ()> {
+    pub fn add_data(&mut self, data: Vec<u8>) -> Result<(), Http2Error> {
         if self.should_close {
             // Adding data after we already closed the stream is not valid, because we cannot make
             // sure to send it.
-            return Err(())
+            return Err(Http2Error::TokioSync(TokioSyncError::DataChunkAfterEndOfBody));
         }
 
         self.out_queue.push_back(data);
@@ -329,13 +336,15 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
     ///
     /// Also starts tracking the mapping between the Tokio request ID (`request_id`) and the HTTP/2
     /// stream ID that it ends up getting assigned to.
-    fn start_request(&mut self, request_id: u64, headers: Vec<StaticHeader>, has_body: bool) {
+    fn start_request(&mut self,
+                     request_id: u64,
+                     headers: Vec<StaticHeader>,
+                     has_body: bool)
+                     -> Result<(), Http2Error> {
         let request = self.prepare_request(request_id, headers, has_body);
 
         // Start the request, obtaining the h2 stream ID.
-        let stream_id = self.conn.start_request(request, &mut self.sender)
-            .ok()
-            .expect("queuing a send should work");
+        let stream_id = self.conn.start_request(request, &mut self.sender)?;
 
         // The ID has been assigned to the stream, so attach it to the stream instance too.
         // TODO(mlalic): The `solicit::Stream` trait should grow an `on_id_assigned` method which
@@ -348,6 +357,7 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
         // up the request ID we get there to the h2 stream that the data chunk should be given to.
         debug!("started new request; tokio request={}, h2 stream id={}", request_id, stream_id);
         self.tokio_request_to_h2stream.insert(request_id, stream_id);
+        Ok(())
     }
 
     /// Prepares a new RequestStream with the given headers. If the request won't have any body, it
@@ -369,31 +379,33 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
     /// Handles all frames currently found in the in buffer. After this completes, the buffer will
     /// no longer contain these frames and they will have been seen by the h2 connection, with all
     /// of their effects being reported to the h2 session.
-    fn handle_new_frames(&mut self) {
+    fn handle_new_frames(&mut self) -> Result<(), Http2Error> {
         // We have new data. Let's try parsing and handling as many h2
         // frames as we can!
-        while let Some(bytes_to_discard) = self.handle_next_frame() {
+        while let Some(bytes_to_discard) = self.handle_next_frame()? {
             // So far, the frame wasn't copied out of the original input buffer.
             // Now, we'll simply discard from the input buffer...
             self.receiver.discard_frame(bytes_to_discard);
         }
+
+        Ok(())
     }
 
     /// Handles the next frame in the in buffer (if any) and returns its size in bytes. These bytes
     /// can now safely be discarded from the in buffer, as they have been processed by the h2
     /// connection.
-    fn handle_next_frame(&mut self) -> Option<usize> {
-        match self.receiver.get_next_frame() {
+    fn handle_next_frame(&mut self) -> Result<Option<usize>, Http2Error> {
+        let res = match self.receiver.get_next_frame() {
             None => None,
             Some(mut frame_container) => {
                 // Give the frame_container to the conn...
-                self.conn
-                    .handle_next_frame(&mut frame_container, &mut self.sender)
-                    .expect("fixme: handle h2 protocol errors gracefully");
+                self.conn.handle_next_frame(&mut frame_container, &mut self.sender)?;
 
                 Some(frame_container.len())
             },
-        }
+        };
+
+        Ok(res)
     }
 
     /// Cleans up all closed streams.
@@ -405,11 +417,11 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
 
     /// Try to read more data off the socket and handle any HTTP/2 frames that we might
     /// successfully obtain.
-    fn try_read_more(&mut self) -> io::Result<()> {
+    fn try_read_more(&mut self) -> Result<(), Http2Error> {
         let total_read = self.receiver.try_read()?;
 
         if total_read > 0 {
-            self.handle_new_frames();
+            self.handle_new_frames()?;
 
             // After processing frames, let's see if there are any streams that have been completed
             // as a result...
@@ -459,19 +471,21 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
     /// Add a body chunk to the request with the given Tokio ID.
     ///
     /// Currently, we assume that each request will contain only a single body chunk.
-    fn add_body_chunk(&mut self, id: u64, chunk: Option<HttpRequestBody>) {
+    fn add_body_chunk(&mut self,
+                      id: u64,
+                      chunk: Option<HttpRequestBody>)
+                      -> Result<(), Http2Error> {
         let stream_id =
             self.tokio_request_to_h2stream
                 .get(&id)
-                .expect("an in-flight request needs to have an active h2 stream");
+                .ok_or(Http2Error::TokioSync(TokioSyncError::UnmatchedRequestId))?;
 
         match self.conn.state.get_stream_mut(*stream_id) {
             Some(mut stream) => {
                 match chunk {
                     Some(HttpRequestBody { body }) => {
                         trace!("set data for a request stream {}", *stream_id);
-                        stream.add_data(body)
-                              .expect("stream unexpectedly already locally closed");
+                        stream.add_data(body)?;
                     },
                     None => {
                         trace!("no more data for stream {}", *stream_id);
@@ -481,11 +495,13 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
             },
             None => {},
         };
+
+        Ok(())
     }
 
     /// Attempts to queue up more HTTP/2 frames onto the `sender`.
-    fn try_write_next_data(&mut self) -> HttpResult<bool> {
-        self.conn.send_next_data(&mut self.sender).map(|res| {
+    fn try_write_next_data(&mut self) -> Result<bool, Http2Error> {
+        self.conn.send_next_data(&mut self.sender).map_err(|e| e.into()).map(|res| {
             match res {
                 SendStatus::Sent => true,
                 SendStatus::Nothing => false,
@@ -501,7 +517,7 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
         }
 
         trace!("preparing a data frame");
-        let has_data = self.try_write_next_data().expect("fixme: Handle protocol failure");
+        let has_data = self.try_write_next_data()?;
         if has_data {
             debug!("queued up a new data frame");
 
@@ -564,6 +580,9 @@ impl<T> Stream for H2ClientTokioTransport<T> where T: Io + 'static {
 
 impl<T> Sink for H2ClientTokioTransport<T> where T: Io + 'static {
     type SinkItem = Frame<HttpRequestHeaders, HttpRequestBody, io::Error>;
+    // NOTE: For some reason, Tokio requires that the Transport uses io::Error for its error type,
+    // so any non-IO errors, like HTTP/2 protocol errors (`solicit::http::HttpError`) are wrapped
+    // in an `io::ErrorKind::Other`...
     type SinkError = io::Error;
 
     fn start_send(&mut self,
@@ -574,11 +593,11 @@ impl<T> Sink for H2ClientTokioTransport<T> where T: Io + 'static {
                 debug!("start new request id={}, body={}", id, has_body);
                 trace!("  headers={:?}", headers);
 
-                self.start_request(id, headers, has_body);
+                self.start_request(id, headers, has_body)?;
             },
             Frame::Body { id, chunk } => {
                 debug!("add body chunk for request id={}", id);
-                self.add_body_chunk(id, chunk);
+                self.add_body_chunk(id, chunk)?;
             },
             _ => {},
         }
