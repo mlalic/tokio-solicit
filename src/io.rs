@@ -13,6 +13,7 @@
 //! the underlying IO, or serializing a frame into bytes prior to writing them out.
 
 use std::io::{self, Read, Write};
+use std::collections::VecDeque;
 
 use futures::{Async};
 use tokio_core::io::{Io, ReadHalf, WriteHalf};
@@ -29,7 +30,7 @@ pub struct FrameSender<T: Io + 'static> {
     /// The current buffer being sent out.
     out_buf: Option<io::Cursor<Vec<u8>>>,
     /// Pending serialized frames
-    out_frames: Vec<Vec<u8>>,
+    out_frames: VecDeque<Vec<u8>>,
 }
 
 impl<T: Io + 'static> FrameSender<T> {
@@ -39,14 +40,14 @@ impl<T: Io + 'static> FrameSender<T> {
         FrameSender {
             io: io,
             out_buf: None,
-            out_frames: vec![],
+            out_frames: VecDeque::new(),
         }
     }
 
     /// Adds a serialized frame to the pending frame buffer. It does not attempt writing
     /// anything to the underlying socket.
     fn append(&mut self, b: Vec<u8>) {
-        self.out_frames.push(b);
+        self.out_frames.push_back(b);
     }
 
     /// Attempts to perform a write of all remaining buffered data. This includes the current
@@ -130,18 +131,20 @@ impl<T: Io + 'static> FrameSender<T> {
     /// Returns `false` if there are no more bytes to send.
     fn prepare_next(&mut self) -> bool {
         if self.out_buf.is_none() {
-            if self.out_frames.len() == 0 {
+            match self.out_frames.pop_front() {
                 // We've written out everything that we had.
-                return false;
-            } else { 
-                // Get the next frame and make it the out buffer.
-                // TODO: Should use a more efficient store for the frame buffer; at least a deque.
-                let buf = self.out_frames.remove(0);
-                self.out_buf = Some(io::Cursor::new(buf));
-            }
-        }
+                None => false,
 
-        true
+                // Get the next frame and make it the out buffer.
+                Some(buf) => {
+                    self.out_buf = Some(io::Cursor::new(buf));
+                    true
+                }
+            }
+        } else {
+            // The `out_buf` is still active, so there's obviously more stuff to send.
+            true
+        }
     }
 }
 
