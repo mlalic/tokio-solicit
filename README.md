@@ -67,10 +67,6 @@ Currently this only supports cleartext HTTP/2 connections, which are far and few
 wild. For a true TLS implementation, we'd need a true async IO ALPN implementation (ALPN
 is the only supported way of negotiating that a TLS socket connection will use HTTP/2).
 
-Secondly, the client currently resolves to the entire response (both the response headers
-and the full body). Instead, it should resolve to response headers and a `Stream` of body
-chunks. There's nothing inherently blocking this from being implemented.
-
 # License
 
 The project is published under the terms of the MIT license.
