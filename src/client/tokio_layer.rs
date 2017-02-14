@@ -632,13 +632,19 @@ impl<T> ClientProto<T> for H2ClientTokioProto where T: 'static + Io {
 
     fn bind_transport(&self, io: T) -> Self::BindTransport {
         let mut buf = io::Cursor::new(vec![]);
-        client::write_preface(&mut buf).expect("writing to an in-memory buffer should not fail");
-        let buf = buf.into_inner();
+        let preface_buf_future = future::result(
+            client::write_preface(&mut buf).map(move |_| buf.into_inner()));
 
-        Box::new(tokio_io::write_all(io, buf).and_then(|(io, _buf)| {
-            debug!("client preface write complete");
-            future::ok(H2ClientTokioTransport::new(io))
-        }))
+        Box::new(
+            preface_buf_future
+                 .and_then(|buf| {
+                     tokio_io::write_all(io, buf)
+                 })
+                 .map(|(io, _buf)| {
+                     debug!("client preface write complete");
+                     H2ClientTokioTransport::new(io)
+                 })
+        )
     }
 }
 
