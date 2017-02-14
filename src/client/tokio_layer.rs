@@ -303,8 +303,6 @@ pub struct H2ClientTokioTransport<T: Io + 'static> {
     conn: ClientConnection<DefaultSessionState<ClientMarker, H2Stream>>,
     ready_responses: ResponseChunkReceiver,
 
-    // TODO: Should use a bijective map here to simplify...
-    h2stream_to_tokio_request: HashMap<u32, u64>,
     tokio_request_to_h2stream: HashMap<u64, u32>,
 }
 
@@ -320,7 +318,6 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
                 HttpConnection::new(HttpScheme::Http),
                 DefaultSessionState::<ClientMarker, H2Stream>::new()),
             ready_responses: ResponseChunkReceiver::new(),
-            h2stream_to_tokio_request: HashMap::new(),
             tokio_request_to_h2stream: HashMap::new(),
         }
     }
@@ -346,11 +343,10 @@ impl<T> H2ClientTokioTransport<T> where T: Io + 'static {
         //               Indeed, this is slightly awkward...
         self.conn.state.get_stream_mut(stream_id).expect("stream _just_ created").stream_id = Some(stream_id);
 
-        // Now that the h2 request has started, we can keep the mapping of h2 stream ID to the
-        // Tokio request ID, so that when the response starts coming in, we can figure out which
-        // Tokio request it belongs to...
+        // Now that the h2 request has started, we can keep the mapping of the Tokio request ID to
+        // the matching h2 stream. This is used once data chunks start coming in, so we can match
+        // up the request ID we get there to the h2 stream that the data chunk should be given to.
         debug!("started new request; tokio request={}, h2 stream id={}", request_id, stream_id);
-        self.h2stream_to_tokio_request.insert(stream_id, request_id);
         self.tokio_request_to_h2stream.insert(request_id, stream_id);
     }
 
