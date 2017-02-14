@@ -38,8 +38,9 @@ fn main() {
         // ...once that is resolved, send out a couple of requests.
         println!("Connection established.");
 
-        let get = client.get(b"/get");
-        let post = client.post(b"/post", b"Hello, world!".to_vec());
+        // (We want the futures to resolve only once the full body is ready)
+        let get = client.get(b"/get").into_full_body_response();
+        let post = client.post(b"/post", b"Hello, world!".to_vec()).into_full_body_response();
 
         // ...and wait for both to complete.
         Future::join(get, post)
