@@ -570,7 +570,6 @@ impl<T> Stream for H2ClientTokioTransport<T> where T: Io + 'static {
         self.try_read_more()?;
 
         // Now return the first response that we have ready, if any.
-        // TODO: Handle eof.
         match self.get_next_response_frame() {
             None => Ok(Async::NotReady),
             Some(tokio_frame) => Ok(Async::Ready(Some(tokio_frame))),

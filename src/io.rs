@@ -219,21 +219,18 @@ impl<T: Io + 'static> FrameReceiver<T> {
     /// Attempts to read from the underlying socket.
     ///
     /// Returns the number of bytes read. If it would be unable to perform a read without
-    /// blocking, immediately returns with 0.
-    ///
-    /// TODO: This doesn't properly disambiguate between eof and wouldblock.
+    /// blocking, immediately returns with 0. If it hits an EOF, it returns with an error, as the
+    /// fact that this was called indicates that we were expecting more data on the wire and
+    /// therefore we've hit an unexpected eof.
     pub fn try_read(&mut self) -> io::Result<usize> {
-        let mut done = false;
         let initial_size = self.in_buf.len();
-        while !done {
+        loop {
             match self.io.read_to_end(&mut self.in_buf) {
                 Ok(0) => {
-                    // EOF...
-                    trace!("eof");
-                    done = true;
+                    trace!("unexpected eof");
+                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
                 },
-                Ok(_) => {
-                },
+                Ok(_) => {},
                 Err(e) => {
                     if e.kind() == io::ErrorKind::WouldBlock {
                         trace!("read - would block");
