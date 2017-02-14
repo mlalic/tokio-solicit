@@ -57,27 +57,27 @@ enum ResponseChunk {
 #[derive(Clone)]
 struct ResponseChunkSender {
     request_id: u64,
-    result_stream: Rc<RefCell<Vec<(u64, ResponseChunk)>>>,
+    result_stream: Rc<RefCell<VecDeque<(u64, ResponseChunk)>>>,
 }
 
 impl ResponseChunkSender {
     /// Places the given `ResponseChunk` into the shared buffer.
     pub fn send_chunk(&mut self, chunk: ResponseChunk) {
-        self.result_stream.borrow_mut().push((self.request_id, chunk));
+        self.result_stream.borrow_mut().push_back((self.request_id, chunk));
     }
 }
 
 /// A helper struct that exposes the receiving end of the shared buffer of `ResponseChunk`s that
 /// the `H2ClientTokioTransport` should yield.
 struct ResponseChunkReceiver {
-    ready_responses: Rc<RefCell<Vec<(u64, ResponseChunk)>>>,
+    ready_responses: Rc<RefCell<VecDeque<(u64, ResponseChunk)>>>,
 }
 
 impl ResponseChunkReceiver {
     /// Creates a new `ResponseChunkReceiver`
     pub fn new() -> ResponseChunkReceiver {
         ResponseChunkReceiver {
-            ready_responses: Rc::new(RefCell::new(vec![])),
+            ready_responses: Rc::new(RefCell::new(VecDeque::new())),
         }
     }
 
@@ -93,11 +93,7 @@ impl ResponseChunkReceiver {
     /// available chunk, it returns `None`.
     pub fn get_next_chunk(&mut self) -> Option<(u64, ResponseChunk)> {
         let mut ready_responses = self.ready_responses.borrow_mut();
-        if !ready_responses.is_empty() {
-            Some(ready_responses.remove(0))
-        } else {
-            None
-        }
+        ready_responses.pop_front()
     }
 }
 
