@@ -62,3 +62,10 @@ pub struct HttpResponseHeaders {
 pub struct HttpResponseBody {
     pub body: Vec<u8>,
 }
+
+/// The full response, including both all the headers (including pseudo-headers) and the full body.
+#[derive(Debug)]
+pub struct HttpResponse {
+    pub headers: Vec<StaticHeader>,
+    pub body: Vec<u8>,
+}

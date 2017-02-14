@@ -37,17 +37,14 @@ fn main() {
     let future_response = future_client.and_then(|mut client| {
         println!("Connection established.");
 
-        let get = client.get(b"/get");
+        // For the first request, we simply want the full body, without streaming individual body
+        // chunks...
+        let get = client.get(b"/get").into_full_body_response();
         let post = client.post(b"/post", b"Hello, world!".to_vec());
 
-        // Accumulate the bodies of each request into a single vector, ignoring the
-        // headers...
-        // Here we do it using the convenience method exposed by the request Future.
-        let get = get.into_full_body_response().map(|(_headers, body)| body);
-
-        // In this case, do it "manually" in order to do some more processing for each chunk (for
-        // demo purposes).
-        let post = post.and_then(|(_, body)| {
+        // ...for the other, we accumulate the body "manually" in order to do some more
+        // processing for each chunk (for demo purposes). Also, discards the headers.
+        let post = post.and_then(|(_headers, body)| {
             body.fold(Vec::<u8>::new(), |mut vec, chunk| {
                 println!("receiving a new chunk of size {}", chunk.body.len());
 
@@ -56,11 +53,12 @@ fn main() {
             })
         });
 
-        // ...and yield a future that resolves once both bodies are ready
+        // Finally, yield a future that resolves once both requests are complete (and both bodies
+        // are available).
         Future::join(get, post)
-    }).map(|(get_response_body, post_response_body)| {
+    }).map(|(get_response, post_response_body)| {
         // Convert the bodies to a UTF-8 string
-        let get_res: String = str::from_utf8(&get_response_body).unwrap().into();
+        let get_res: String = str::from_utf8(&get_response.body).unwrap().into();
         let post_res: String = str::from_utf8(&post_response_body).unwrap().into();
 
         // ...and yield a pair of bodies converted to a string.

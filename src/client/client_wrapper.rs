@@ -1,7 +1,13 @@
 //! The module exposes the `H2Client` struct, which implements a futures-based API for performing
 //! HTTP/2 requests, based on Tokio.
 
-use super::{HttpRequestHeaders, HttpRequestBody, HttpResponseHeaders, HttpResponseBody};
+use super::{
+    HttpRequestHeaders,
+    HttpRequestBody,
+    HttpResponseHeaders,
+    HttpResponseBody,
+    HttpResponse
+};
 use client::tokio_layer::{H2ClientTokioProto};
 
 use std::io::{self};
@@ -87,16 +93,19 @@ impl FutureH2Response {
 
     /// Consumes the `FutureH2Response` and returns a new `Future` that will resolve once the full
     /// body of the response has become available, with both the response headers and all the body
-    /// bytes in a `Vec<u8>`.
-    pub fn into_full_body_response(self) -> BoxFuture<(HttpResponseHeaders, Vec<u8>), io::Error> {
+    /// bytes in a `Vec<u8>` (as an `HttpResponse` instance).
+    pub fn into_full_body_response(self) -> BoxFuture<HttpResponse, io::Error> {
         let body_response = self.and_then(|(headers, body_stream)| {
             body_stream
                 .fold(Vec::<u8>::new(), |mut vec, chunk| {
                     vec.extend(chunk.body.into_iter());
                     future::ok::<_, io::Error>(vec)
                 })
-                .map(|body| {
-                    (headers, body)
+                .map(move |body| {
+                    HttpResponse {
+                        headers: headers.headers,
+                        body: body
+                    }
                 })
         });
 
