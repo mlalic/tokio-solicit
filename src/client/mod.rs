@@ -10,6 +10,7 @@ use solicit::http::{self as http2, StaticHeader};
 
 mod tokio_layer;
 mod client_wrapper;
+mod connectors;
 
 pub use self::client_wrapper::H2Client;
 

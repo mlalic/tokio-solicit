@@ -20,19 +20,10 @@ fn main() {
     let handle = core.handle();
 
     let addr = "127.0.0.1:8080".parse().expect("valid IP address");
-    /*
-    use std::net::{ToSocketAddrs};
-    let addr =
-        "http2bin.org:80"
-            .to_socket_addrs()
-            .expect("unable to resolve the domain name")
-            .next()
-            .expect("no matching ip addresses");
-    */
 
     println!("Socket address - {:?}", addr);
 
-    let future_client = H2Client::connect("localhost", &addr, &handle);
+    let future_client = H2Client::cleartext_connect("localhost", &addr, &handle);
 
     let future_response = future_client.and_then(|mut client| {
         println!("Connection established.");
@@ -81,7 +72,7 @@ fn do_streaming_request(core: &mut Core) {
 
     let handle = core.handle();
     let addr = "127.0.0.1:8080".parse().expect("valid IP address");
-    let future_client = H2Client::connect("localhost", &addr, &handle);
+    let future_client = H2Client::cleartext_connect("localhost", &addr, &handle);
 
     let future_response = future_client.and_then(|mut client| {
         let (post, tx) = client.streaming_request(b"POST", b"/post", iter::empty());

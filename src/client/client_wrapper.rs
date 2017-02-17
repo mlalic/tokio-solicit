@@ -8,6 +8,7 @@ use super::{
     HttpResponseBody,
     HttpResponse
 };
+use client::connectors::{CleartextConnector, H2ConnectorParams};
 use client::tokio_layer::{H2ClientTokioProto};
 
 use std::io::{self};
@@ -20,12 +21,13 @@ use futures::stream::{Stream};
 use futures::sync::mpsc;
 
 use tokio_core::reactor::{Handle};
+use tokio_core::io::{Io};
+use tokio_core::net::TcpStream;
+use tokio_service::{Service};
 use tokio_proto::{Connect, TcpClient};
 use tokio_proto::streaming::{Message, Body};
 use tokio_proto::streaming::multiplex::{StreamingMultiplex};
 use tokio_proto::util::client_proxy::ClientProxy;
-
-use tokio_service::{Service};
 
 use solicit::http::{Header, StaticHeader};
 
@@ -135,9 +137,40 @@ impl H2Client {
     /// requests to this socket.
     ///
     /// Returns a future that will resolve to the `H2Client`.
-    pub fn connect(authority: &str, socket_addr: &SocketAddr, handle: &Handle) -> H2ClientNew {
-        let proto = H2ClientTokioProto;
+    ///
+    /// The HTTP/2 connection will be executed in cleartext, over the raw socket.
+    pub fn cleartext_connect(authority: &str,
+                             socket_addr: &SocketAddr,
+                             handle: &Handle)
+                             -> H2ClientNew<CleartextConnector<TcpStream>> {
 
+        H2Client::with_connector(
+            authority,
+            socket_addr,
+            handle,
+            CleartextConnector::<TcpStream>::new())
+    }
+
+    /// Connect to the given socket and yield a new `H2Client` that can be used to send HTTP/2
+    /// requests to this socket.
+    ///
+    /// Returns a future that will resolve to the `H2Client`.
+    ///
+    /// HTTP/2 connection negotiation needs to be performed by the provided `Connector` instance,
+    /// which will be provided the raw socket as soon as the client has connected.
+    pub fn with_connector<Connector>(
+        authority: &str,
+        socket_addr: &SocketAddr,
+        handle: &Handle,
+        connector: Connector)
+        -> H2ClientNew<Connector>
+            where Connector: Service<Request=H2ConnectorParams<TcpStream>, Error=io::Error>,
+                  Connector::Response: Io {
+
+        let proto = H2ClientTokioProto {
+            connector: connector,
+            authority: authority.into(),
+        };
         let client = TcpClient::<StreamingMultiplex<RequestBodyStream>, _>::new(proto);
         let connect = client.connect(&socket_addr, &handle);
 
@@ -238,17 +271,24 @@ impl H2Client {
 
 /// A simple `Future` implementation that resolves once the HTTP/2 client connection is
 /// established.
-pub struct H2ClientNew {
+pub struct H2ClientNew<Connector>
+        where Connector: 'static + Service<Request=H2ConnectorParams<TcpStream>, Error=io::Error>,
+              Connector::Response: 'static + Io {
+
     /// The future that resolves to a new Tokio ClientProxy.
-    inner: Connect<StreamingMultiplex<RequestBodyStream>, H2ClientTokioProto>,
+    inner: Connect<StreamingMultiplex<RequestBodyStream>, H2ClientTokioProto<Connector>>,
+
     /// The authority that the new client will send requests to.
     authority: Option<Vec<u8>>,
 }
 
-impl H2ClientNew {
-    fn new(connect: Connect<StreamingMultiplex<RequestBodyStream>, H2ClientTokioProto>,
+impl<Connector> H2ClientNew<Connector>
+        where Connector: 'static + Service<Request=H2ConnectorParams<TcpStream>, Error=io::Error>,
+              Connector::Response: 'static + Io {
+
+    fn new(connect: Connect<StreamingMultiplex<RequestBodyStream>, H2ClientTokioProto<Connector>>,
            authority: Vec<u8>)
-           -> H2ClientNew {
+           -> H2ClientNew<Connector> {
         H2ClientNew {
             inner: connect,
             authority: Some(authority),
@@ -256,7 +296,9 @@ impl H2ClientNew {
     }
 }
 
-impl Future for H2ClientNew {
+impl<Connector> Future for H2ClientNew<Connector>
+        where Connector: 'static + Service<Request=H2ConnectorParams<TcpStream>, Error=io::Error>,
+              Connector::Response: 'static + Io {
     type Item = H2Client;
     type Error = io::Error;
 

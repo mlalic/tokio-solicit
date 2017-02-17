@@ -15,6 +15,7 @@ use super::{
     HttpResponseHeaders,
     HttpResponseBody
 };
+use client::connectors::H2ConnectorParams;
 
 use io::{FrameSender, FrameReceiver};
 
@@ -30,6 +31,7 @@ use futures::stream::{Stream};
 use futures::task;
 
 use tokio_core::io::{Io, self as tokio_io};
+use tokio_service::Service;
 use tokio_proto::streaming::multiplex::{ClientProto, Transport, Frame};
 
 use solicit::http::{
@@ -637,32 +639,46 @@ impl<ReadBody, T> Transport<ReadBody> for H2ClientTokioTransport<T> where T: Io 
 /// The transport is resolved only once the preface write is complete, as only after this can the
 /// `solicit` `ClientConnection` take over management of the socket: once the HTTP/2 frames start
 /// flowing through.
-pub struct H2ClientTokioProto;
+pub struct H2ClientTokioProto<Connector>
+    where Connector: Service,
+          Connector::Response: Io
+{
+    pub connector: Connector,
+    pub authority: String,
+}
 
-impl<T> ClientProto<T> for H2ClientTokioProto where T: 'static + Io {
+impl<T, Connector> ClientProto<T> for H2ClientTokioProto<Connector>
+        where T: 'static + Io,
+              Connector: 'static + Service<Request=H2ConnectorParams<T>, Error=io::Error>,
+              Connector::Response: 'static + Io {
     type Request = HttpRequestHeaders;
     type RequestBody = HttpRequestBody;
     type Response = HttpResponseHeaders;
     type ResponseBody = HttpResponseBody;
     type Error = io::Error;
-    type Transport = H2ClientTokioTransport<T>;
+    type Transport = H2ClientTokioTransport<Connector::Response>;
     type BindTransport = Box<Future<Item=Self::Transport, Error=io::Error>>;
 
     fn bind_transport(&self, io: T) -> Self::BindTransport {
-        let mut buf = io::Cursor::new(vec![]);
-        let preface_buf_future = future::result(
-            client::write_preface(&mut buf).map(move |_| buf.into_inner()));
+        let params = H2ConnectorParams::new(self.authority.clone(), io);
 
-        Box::new(
-            preface_buf_future
-                 .and_then(|buf| {
-                     tokio_io::write_all(io, buf)
-                 })
-                 .map(|(io, _buf)| {
-                     debug!("client preface write complete");
-                     H2ClientTokioTransport::new(io)
-                 })
-        )
+        let transport = self.connector.call(params)
+            .and_then(|io| {
+                // Prepare the preface into an in-memory buffer...
+                let mut buf = io::Cursor::new(vec![]);
+                let preface_buf_future = future::result(
+                    client::write_preface(&mut buf).map(move |_| buf.into_inner()));
+                preface_buf_future
+                    .and_then(|buf| {
+                        trace!("Kicking off a client preface write");
+                        tokio_io::write_all(io, buf)
+                    })
+                    .map(|(io, _buf)| {
+                        debug!("client preface write complete");
+                        H2ClientTokioTransport::new(io)
+                    })
+            });
+
+        Box::new(transport)
     }
 }
-
