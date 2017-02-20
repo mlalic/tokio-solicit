@@ -13,15 +13,14 @@ use tokio_core::reactor::{Core};
 
 use tokio_solicit::client::H2Client;
 
-fn main() {
-    env_logger::init().expect("logger init is required");
-
+// Shows the usage of `H2Client` when establishing an HTTP/2 connection over cleartext TCP.
+// Also demonstrates how to stream the body of the response (i.e. get response body chunks as soon
+// as they are received on a `futures::Stream`.
+fn cleartext_example() {
     let mut core = Core::new().expect("event loop required");
     let handle = core.handle();
 
     let addr = "127.0.0.1:8080".parse().expect("valid IP address");
-
-    println!("Socket address - {:?}", addr);
 
     let future_client = H2Client::cleartext_connect("localhost", &addr, &handle);
 
@@ -59,17 +58,27 @@ fn main() {
     let res = core.run(future_response).expect("responses!");
 
     println!("{:?}", res);
+}
+
+fn main() {
+    env_logger::init().expect("logger init is required");
+
+    // Establish an http/2 connection (over cleartext TCP), issue a couple of requests, and
+    // stream the body of the response of one of them. Wait until both are ready and then
+    // print the bodies.
+    cleartext_example();
 
     // An additional demo showing how to perform a streaming _request_ (i.e. the body of the
     // request is streamed out to the server).
-    do_streaming_request(&mut core);
+    do_streaming_request();
 }
 
-fn do_streaming_request(core: &mut Core) {
+fn do_streaming_request() {
     use std::iter;
     use tokio_solicit::client::HttpRequestBody;
     use futures::Sink;
 
+    let mut core = Core::new().expect("event loop required");
     let handle = core.handle();
     let addr = "127.0.0.1:8080".parse().expect("valid IP address");
     let future_client = H2Client::cleartext_connect("localhost", &addr, &handle);
