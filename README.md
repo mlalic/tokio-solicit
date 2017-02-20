@@ -12,6 +12,7 @@ extern crate futures;
 extern crate tokio_solicit;
 
 use std::str;
+use std::net::{ToSocketAddrs};
 
 use futures::{Future};
 use tokio_core::reactor::{Core};
@@ -27,36 +28,35 @@ fn main() {
     let handle = core.handle();
 
     // Obtain a `SocketAddr` in any supported way...
-    let addr = "127.0.0.1:8080".parse().expect("valid IP address");
+    let addr =
+        "google.com:443"
+            .to_socket_addrs()
+            .expect("unable to resolve the domain name")
+            .next()
+            .expect("no matching ip addresses");
 
     // Prepare the http/2 client, providing it additionally the authority that it
     // is to communicate to (aka Host name). This returns a future that resolves to
-    // an `H2Client` instance.
-    let future_client = H2Client::connect("localhost", &addr, &handle);
+    // an `H2Client` instance...
+    let future_client = H2Client::connect("google.com", &addr, &handle);
 
     let future_response = future_client.and_then(|mut client| {
-        // ...once that is resolved, send out a couple of requests.
+        // ...once that is resolved, send out the request.
         println!("Connection established.");
 
-        // (We want the futures to resolve only once the full body is ready)
-        let get = client.get(b"/get").into_full_body_response();
-        let post = client.post(b"/post", b"Hello, world!".to_vec()).into_full_body_response();
-
-        // ...and wait for both to complete.
-        Future::join(get, post)
-    }).map(|(get_response, post_response)| {
-        // ...before extracting the response bodies into the result.
-        // (Recklessly assume it's utf-8!)
-        let get_res: String = str::from_utf8(&get_response.body).unwrap().into();
-        let post_res: String = str::from_utf8(&post_response.body).unwrap().into();
-        (get_res, post_res)
+        // (We want the future to resolve only once the full body is ready)
+        client.get(b"/").into_full_body_response()
     });
 
     // No code up to here actually performed any IO. Now, let's spin up the event loop
-    // and wait for the future we built up to resolve to the two response bodies.
-    let res = core.run(future_response).expect("responses!");
+    // and wait for the future we built up to resolve to the response.
+    let response = core.run(future_response).expect("unexpected error");
 
-    println!("{:?}", res);
+    // Print both the headers and the response body...
+    println!("{:?}", response.headers);
+    // (Recklessly assume it's utf-8!)
+    let body = str::from_utf8(&response.body).unwrap();
+    println!("{}", body);
 }
 
 ```
