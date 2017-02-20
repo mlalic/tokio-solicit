@@ -60,6 +60,38 @@ fn cleartext_example() {
     println!("{:?}", res);
 }
 
+/// Fetches the response of google.com over HTTP/2.
+///
+/// The connection is negotiated during the TLS handshake using ALPN.
+fn alpn_example() {
+    println!();
+    println!("---- ALPN example ----");
+    use std::net::{ToSocketAddrs};
+
+    let mut core = Core::new().expect("event loop required");
+    let handle = core.handle();
+    let addr =
+        "google.com:443"
+            .to_socket_addrs()
+            .expect("unable to resolve the domain name")
+            .next()
+            .expect("no matching ip addresses");
+
+    let future_response = H2Client::connect("google.com", &addr, &handle).and_then(|mut client| {
+        // Ask for the homepage...
+        client.get(b"/").into_full_body_response()
+    });
+
+    let response = core.run(future_response).expect("unexpected failure");
+    // Print both the headers and the response body...
+    println!("{:?}", response.headers);
+    // (Recklessly assume it's utf-8!)
+    let body = str::from_utf8(&response.body).unwrap();
+    println!("{}", body);
+
+    println!("---- ALPN example end ----");
+}
+
 fn main() {
     env_logger::init().expect("logger init is required");
 
@@ -68,12 +100,17 @@ fn main() {
     // print the bodies.
     cleartext_example();
 
+    // Show how to estalbish a connection over TLS, while negotiating the use of http/2 over ALPN.
+    alpn_example();
+
     // An additional demo showing how to perform a streaming _request_ (i.e. the body of the
     // request is streamed out to the server).
     do_streaming_request();
 }
 
 fn do_streaming_request() {
+    println!();
+    println!("---- streaming request example ----");
     use std::iter;
     use tokio_solicit::client::HttpRequestBody;
     use futures::Sink;
@@ -95,4 +132,5 @@ fn do_streaming_request() {
 
     let res = core.run(future_response).expect("response");
     println!("{:?}", res);
+    println!("---- streaming request example end ----");
 }
