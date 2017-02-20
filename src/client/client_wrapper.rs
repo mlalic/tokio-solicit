@@ -8,7 +8,7 @@ use super::{
     HttpResponseBody,
     HttpResponse
 };
-use client::connectors::{CleartextConnector, H2ConnectorParams};
+use client::connectors::{TlsConnector, CleartextConnector, H2ConnectorParams};
 use client::tokio_layer::{H2ClientTokioProto};
 
 use std::io::{self};
@@ -28,6 +28,7 @@ use tokio_proto::{Connect, TcpClient};
 use tokio_proto::streaming::{Message, Body};
 use tokio_proto::streaming::multiplex::{StreamingMultiplex};
 use tokio_proto::util::client_proxy::ClientProxy;
+
 
 use solicit::http::{Header, StaticHeader};
 
@@ -138,6 +139,24 @@ impl H2Client {
     ///
     /// Returns a future that will resolve to the `H2Client`.
     ///
+    /// The connection established connection will be over TLS (and http/2 has to be negotiated
+    /// by ALPN).
+    pub fn connect(authority: &str,
+                   socket_addr: &SocketAddr,
+                   handle: &Handle)
+                   -> H2ClientNew<TlsConnector<TcpStream>> {
+        H2Client::with_connector(
+            authority,
+            socket_addr,
+            handle,
+            TlsConnector::<TcpStream>::new())
+    }
+
+    /// Connect to the given socket and yield a new `H2Client` that can be used to send HTTP/2
+    /// requests to this socket.
+    ///
+    /// Returns a future that will resolve to the `H2Client`.
+    ///
     /// The HTTP/2 connection will be executed in cleartext, over the raw socket.
     pub fn cleartext_connect(authority: &str,
                              socket_addr: &SocketAddr,
@@ -220,6 +239,7 @@ impl H2Client {
                                 -> (FutureH2Response, mpsc::Sender<Result<HttpRequestBody, io::Error>>)
                                 where I: IntoIterator<Item=StaticHeader> {
 
+        trace!("starting streaming request");
         let headers = self.prepare_headers(method, path, user_headers);
         let (tx, body) = Body::pair();
 
