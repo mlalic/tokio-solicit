@@ -61,11 +61,7 @@ fn main() {
 
 ```
 
-# Next steps
-
-Currently this only supports cleartext HTTP/2 connections, which are far and few in the
-wild. For a true TLS implementation, we'd need a true async IO ALPN implementation (ALPN
-is the only supported way of negotiating that a TLS socket connection will use HTTP/2).
+For more examples, including how to stream the body of the request and response, check out [`examples/client.rs`](examples/client.rs).
 
 # License
 
